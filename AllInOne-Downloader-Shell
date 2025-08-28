@@ -1,0 +1,770 @@
+#!/bin/bash
+# AllInOne-Downloader-Shell Script
+# Supports multiple platforms and download sources
+# Version: 2.6
+
+# Set script name for self-updating
+SCRIPT_NAME="AllInOne-Downloader-Shell.sh"
+SCRIPT_DIR="$HOME/bin"
+SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_NAME"
+CONFIG_DIR="$HOME/.config/allinone-dl"
+CONFIG_FILE="$CONFIG_DIR/config.conf"
+LOG_FILE="$CONFIG_DIR/download.log"
+
+# GitHub repository details
+GITHUB_USER="Aftab-00"
+GITHUB_REPO="AllInOne-Downloader-Shell"
+GITHUB_URL="https://raw.githubusercontent.com/$GITHUB_USER/$GITHUB_REPO/master/$SCRIPT_NAME"
+
+# Create necessary directories
+mkdir -p "$SCRIPT_DIR"
+mkdir -p "$HOME/Aftab-DL"
+mkdir -p "$CONFIG_DIR"
+
+# Initialize configuration if it doesn't exist
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "DEFAULT_PATH=$HOME/Aftab-DL" > "$CONFIG_FILE"
+    echo "AUTO_UPDATE=true" >> "$CONFIG_FILE"
+    echo "LOGGING=true" >> "$CONFIG_FILE"
+    echo "DEBUG=false" >> "$CONFIG_FILE"
+    echo "TORRENT_SEED_TIME=60" >> "$CONFIG_FILE"
+    echo "TORRENT_MAX_CONNECTIONS=16" >> "$CONFIG_FILE"
+fi
+
+# Load configuration
+source "$CONFIG_FILE"
+
+# Set default values for configuration variables if not set
+DEFAULT_PATH=${DEFAULT_PATH:-"$HOME/Aftab-DL"}
+AUTO_UPDATE=${AUTO_UPDATE:-"true"}
+LOGGING=${LOGGING:-"true"}
+DEBUG=${DEBUG:-"false"}
+TORRENT_SEED_TIME=${TORRENT_SEED_TIME:-"60"}
+TORRENT_MAX_CONNECTIONS=${TORRENT_MAX_CONNECTIONS:-"16"}
+
+# Validate TORRENT_MAX_CONNECTIONS is a number between 1-16
+if ! [[ "$TORRENT_MAX_CONNECTIONS" =~ ^[0-9]+$ ]] || [ "$TORRENT_MAX_CONNECTIONS" -lt 1 ] || [ "$TORRENT_MAX_CONNECTIONS" -gt 16 ]; then
+    TORRENT_MAX_CONNECTIONS=16
+fi
+
+# Initialize log file
+if [ "$LOGGING" = "true" ]; then
+    touch "$LOG_FILE"
+    log() {
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+    }
+else
+    log() { :; }
+fi
+
+# Function to display header
+display_header() {
+    clear
+    echo "=========================================="
+    echo "    AllInOne-Downloader-Shell Script v2.6"
+    echo "=========================================="
+    echo
+}
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Function to show error message
+error_msg() {
+    echo "[ERROR] $1" >&2
+    log "ERROR: $1"
+}
+
+# Function to show success message
+success_msg() {
+    echo "[SUCCESS] $1"
+    log "SUCCESS: $1"
+}
+
+# Function to show info message
+info_msg() {
+    echo "[INFO] $1"
+    log "INFO: $1"
+}
+
+# Function to show debug message
+debug_msg() {
+    if [ "$DEBUG" = "true" ]; then
+        echo "[DEBUG] $1"
+        log "DEBUG: $1"
+    fi
+}
+
+# Function to check and install dependencies
+install_dependencies() {
+    display_header
+    echo "Checking and installing dependencies..."
+    echo
+
+    # Detect OS
+    if [[ "$OSTYPE" == "linux-android"* ]]; then
+        # Termux environment
+        info_msg "Termux environment detected"
+        pkg update -y || { error_msg "Failed to update package lists"; return 1; }
+        pkg upgrade -y || { error_msg "Failed to upgrade packages"; return 1; }
+
+        local packages=(python ffmpeg curl wget mpv aria2)
+        for package in "${packages[@]}"; do
+            if ! command_exists "$package"; then
+                info_msg "Installing $package..."
+                pkg install -y "$package" || { error_msg "Failed to install $package"; return 1; }
+            fi
+        done
+
+        # Python packages
+        info_msg "Installing Python packages..."
+        pip install -U yt-dlp spotdl gallery-dl || { error_msg "Failed to install Python packages"; return 1; }
+
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        # Linux environment
+        info_msg "Linux environment detected"
+
+        # Check package manager
+        if command -v apt-get >/dev/null; then
+            PKG_MANAGER="apt-get"
+            INSTALL_CMD="sudo apt-get install -y"
+        elif command -v dnf >/dev/null; then
+            PKG_MANAGER="dnf"
+            INSTALL_CMD="sudo dnf install -y"
+        elif command -v pacman >/dev/null; then
+            PKG_MANAGER="pacman"
+            INSTALL_CMD="sudo pacman -Syu --noconfirm"
+        else
+            error_msg "No supported package manager found"
+            return 1
+        fi
+
+        # Update package lists
+        if [ "$PKG_MANAGER" = "apt-get" ]; then
+            sudo apt-get update || { error_msg "Failed to update package lists"; return 1; }
+        fi
+
+        # Install Python if needed
+        if ! command_exists python3 || ! command_exists pip3; then
+            info_msg "Installing Python..."
+            $INSTALL_CMD python3 python3-pip || { error_msg "Failed to install Python"; return 1; }
+        fi
+
+        # Install other dependencies
+        local packages=(ffmpeg curl wget mpv aria2)
+        for package in "${packages[@]}"; do
+            if ! command_exists "$package"; then
+                info_msg "Installing $package..."
+                $INSTALL_CMD "$package" || { error_msg "Failed to install $package"; return 1; }
+            fi
+        done
+
+        # Python packages
+        info_msg "Installing Python packages..."
+        pip3 install -U yt-dlp spotdl gallery-dl || { error_msg "Failed to install Python packages"; return 1; }
+
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS environment
+        info_msg "macOS environment detected"
+
+        if ! command_exists brew; then
+            error_msg "Homebrew not found. Please install Homebrew first."
+            echo "Visit: https://brew.sh"
+            read -p "Press Enter to continue after installing Homebrew..."
+            return 1
+        fi
+
+        info_msg "Updating Homebrew..."
+        brew update || { error_msg "Failed to update Homebrew"; return 1; }
+
+        # Install Python if needed
+        if ! command_exists python3 || ! command_exists pip3; then
+            info_msg "Installing Python..."
+            brew install python || { error_msg "Failed to install Python"; return 1; }
+        fi
+
+        # Install other dependencies
+        local packages=(ffmpeg curl wget mpv aria2)
+        for package in "${packages[@]}"; do
+            if ! command_exists "$package"; then
+                info_msg "Installing $package..."
+                brew install "$package" || { error_msg "Failed to install $package"; return 1; }
+            fi
+        done
+
+        # Python packages
+        info_msg "Installing Python packages..."
+        pip3 install -U yt-dlp spotdl gallery-dl || { error_msg "Failed to install Python packages"; return 1; }
+
+    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        # Windows environment (Git Bash/MSYS/Cygwin)
+        info_msg "Windows environment detected"
+        echo "Windows detected. Please ensure you have Python, ffmpeg, and curl installed."
+        echo "You can install them using Chocolatey (choco install python ffmpeg curl)"
+        echo "Then run: pip install -U yt-dlp spotdl gallery-dl"
+        read -p "Press Enter to continue if you have these installed..."
+    fi
+
+    success_msg "Dependencies installation completed!"
+    sleep 2
+    return 0
+}
+
+# Function to check for script updates
+check_for_updates() {
+    display_header
+    echo "Checking for script updates..."
+
+    # Check if auto-update is enabled
+    if [ "$AUTO_UPDATE" != "true" ]; then
+        info_msg "Auto-update is disabled in configuration"
+        return 0
+    fi
+
+    # Create a temporary file to download the latest version
+    TEMP_FILE="/tmp/latest_script.sh"
+
+    # Download the latest version
+    if curl -s -o "$TEMP_FILE" "$GITHUB_URL"; then
+        # Compare the current script with the latest version
+        if ! cmp -s "$SCRIPT_PATH" "$TEMP_FILE"; then
+            echo "A new version is available!"
+            echo "Updating the script..."
+
+            # Replace the current script with the latest version
+            if mv "$TEMP_FILE" "$SCRIPT_PATH" && chmod +x "$SCRIPT_PATH"; then
+                success_msg "Script updated successfully!"
+                echo "Restarting with updated version..."
+                sleep 2
+                # Execute the updated script with the same arguments
+                exec "$SCRIPT_PATH" "$@"
+            else
+                error_msg "Failed to update the script."
+                rm -f "$TEMP_FILE"
+                return 1
+            fi
+        else
+            info_msg "You already have the latest version."
+            rm -f "$TEMP_FILE"
+        fi
+    else
+        error_msg "Failed to check for updates. Continuing with current version."
+        return 1
+    fi
+
+    sleep 2
+    return 0
+}
+
+# Function to get download path
+get_path() {
+    display_header
+    echo "Select download directory:"
+    echo
+
+    # Common paths for different platforms
+    local paths=(
+        "$HOME/Downloads"
+        "$HOME/Music"
+        "$HOME/Videos"
+        "$HOME/Pictures"
+        "$HOME/Documents"
+        "$HOME/Aftab-DL"
+    )
+
+    # Add platform-specific paths
+    if [[ "$OSTYPE" == "linux-android"* ]]; then
+        paths+=(
+            "$HOME/storage/downloads"
+            "$HOME/storage/music"
+            "$HOME/storage/movies"
+            "$HOME/storage/pictures"
+            "$HOME/storage/dcim"
+            "$HOME/storage/external-1"
+        )
+    fi
+
+    # Display available paths
+    local validated_paths=""
+    for i in "${!paths[@]}"; do
+        if [ -d "${paths[$i]}" ]; then
+            echo "$((i+1)). ${paths[$i]}"
+            validated_paths+="${paths[$i]},"
+        fi
+    done
+
+    # Add option for custom path
+    echo "$(( ${#paths[@]} + 1 )). Enter custom path"
+    echo "$(( ${#paths[@]} + 2 )). Use default path ($DEFAULT_PATH)"
+
+    echo
+    read -p "Enter your choice [1-$(( ${#paths[@]} + 2 ))]: " choice
+
+    if [[ $choice -ge 1 && $choice -le ${#paths[@]} ]]; then
+        path="${paths[$((choice-1))]}"
+    elif [[ $choice -eq $(( ${#paths[@]} + 1 )) ]]; then
+        read -p "Enter custom path: " custom_path
+        if [ -d "$custom_path" ]; then
+            path="$custom_path"
+        else
+            echo "Directory doesn't exist. Creating it..."
+            mkdir -p "$custom_path" || { error_msg "Failed to create directory"; return 1; }
+            path="$custom_path"
+        fi
+    elif [[ $choice -eq $(( ${#paths[@]} + 2 )) ]]; then
+        path="$DEFAULT_PATH"
+    else
+        echo "Invalid choice. Using default path."
+        path="$DEFAULT_PATH"
+    fi
+
+    # Remove trailing slash if present
+    path="${path%/}"
+
+    # Create Aftab-DL subdirectory
+    path="$path/Aftab-DL"
+    mkdir -p "$path" || { error_msg "Failed to create download directory"; return 1; }
+
+    # Save as default path
+    if [ "$path" != "$DEFAULT_PATH" ]; then
+        read -p "Set this as default download path? (y/n): " set_default
+        if [[ "$set_default" =~ ^[Yy]$ ]]; then
+            sed -i "s|DEFAULT_PATH=.*|DEFAULT_PATH=$path|g" "$CONFIG_FILE"
+            success_msg "Default path updated to $path"
+        fi
+    fi
+
+    echo
+    echo "Files will be downloaded to: $path"
+    sleep 2
+    return 0
+}
+
+# Function to show download progress
+show_progress() {
+    local pid=$1
+    local delay=0.5
+    local spinstr='|/-\'
+    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "    \b\b\b\b"
+}
+
+# Function to download with progress indicator
+download_with_progress() {
+    local cmd_array=("$@")
+    local error_log="/tmp/download_error.log"
+
+    debug_msg "Running command:"
+    for ((i=0; i<${#cmd_array[@]}; i++)); do
+        debug_msg "  arg[$i]: '${cmd_array[$i]}'"
+    done
+
+    if [ "$LOGGING" = "true" ]; then
+        "${cmd_array[@]}" >> "$LOG_FILE" 2> "$error_log" &
+    else
+        "${cmd_array[@]}" > /dev/null 2> "$error_log" &
+    fi
+
+    local pid=$!
+    show_progress $pid
+    wait $pid
+    local exit_code=$?
+
+    if [ $exit_code -ne 0 ]; then
+        echo
+        error_msg "Download failed with exit code $exit_code"
+        if [ -f "$error_log" ] && [ -s "$error_log" ]; then
+            echo "Error details:"
+            cat "$error_log"
+            echo
+        fi
+        if [ "$LOGGING" = "true" ]; then
+            echo "Check $LOG_FILE for more details."
+        fi
+    fi
+
+    rm -f "$error_log"
+    return $exit_code
+}
+
+# Main menu function
+show_main_menu() {
+    while true; do
+        display_header
+        echo "Main Menu:"
+        echo "1. Download from URL"
+        echo "2. Update script"
+        echo "3. Install/Update dependencies"
+        echo "4. Change download directory"
+        echo "5. View configuration"
+        echo "6. Toggle debug mode"
+        echo "7. Exit"
+        echo
+        read -p "Enter your choice [1-7]: " choice
+
+        case $choice in
+            1) download_from_url ;;
+            2) check_for_updates ;;
+            3) install_dependencies ;;
+            4) get_path ;;
+            5) view_configuration ;;
+            6) toggle_debug ;;
+            7) exit 0 ;;
+            *) error_msg "Invalid choice. Please try again." ;;
+        esac
+
+        read -p "Press Enter to continue..."
+    done
+}
+
+# Function to toggle debug mode
+toggle_debug() {
+    if [ "$DEBUG" = "true" ]; then
+        sed -i 's/DEBUG=true/DEBUG=false/g' "$CONFIG_FILE"
+        DEBUG="false"
+        info_msg "Debug mode disabled"
+    else
+        sed -i 's/DEBUG=false/DEBUG=true/g' "$CONFIG_FILE"
+        DEBUG="true"
+        info_msg "Debug mode enabled"
+    fi
+}
+
+# Function to view configuration
+view_configuration() {
+    display_header
+    echo "Current Configuration:"
+    echo
+    cat "$CONFIG_FILE"
+    echo
+    echo "Configuration file location: $CONFIG_FILE"
+    echo "Log file location: $LOG_FILE"
+}
+
+# Function to clean URL by removing surrounding quotes
+clean_url() {
+    local url="$1"
+    # Remove leading and trailing quotes if present
+    url="${url#\"}"
+    url="${url%\"}"
+    url="${url#\'}"
+    url="${url%\'}"
+    echo "$url"
+}
+
+# Function to detect URL type
+detect_url_type() {
+    local url="$1"
+
+    if [[ "$url" == magnet:* ]]; then
+        echo "magnet"
+    elif [[ "$url" == *.torrent ]]; then
+        echo "torrent_file"
+    elif [[ "$url" == *youtu.be* || "$url" == *youtube.com* || "$url" == *youtube.com/shorts* ]]; then
+        echo "youtube"
+    elif [[ "$url" == *instagram.com* || "$url" == *pinterest.com* || "$url" == *imgur.com* || "$url" == *tiktok.com* ]]; then
+        echo "image_video"
+    elif [[ "$url" == *open.spotify.com/track/* ]]; then
+        echo "spotify_track"
+    elif [[ "$url" == *open.spotify.com/*/playlist/* ]]; then
+        echo "spotify_playlist"
+    elif [[ "$url" == *open.spotify.com/album/* ]]; then
+        echo "spotify_album"
+    elif [[ "$url" == *github.com* ]]; then
+        echo "github"
+    elif [[ "$url" == *soundcloud.com* ]]; then
+        echo "soundcloud"
+    elif [[ "$url" == *vimeo.com* ]]; then
+        echo "vimeo"
+    elif [[ "$url" == *dailymotion.com* ]]; then
+        echo "dailymotion"
+    elif [[ "$url" == *twitch.tv* ]]; then
+        echo "twitch"
+    elif [[ "$url" == *bandcamp.com* ]]; then
+        echo "bandcamp"
+    else
+        echo "unknown"
+    fi
+}
+
+# Function to download from URL
+download_from_url() {
+    display_header
+
+    # Get URL from argument or prompt
+    url=$1
+    if [ -z "$url" ]; then
+        read -p "Enter URL to download: " url
+    fi
+
+    if [ -z "$url" ]; then
+        error_msg "No URL provided"
+        return 1
+    fi
+
+    # Clean the URL by removing any surrounding quotes
+    url=$(clean_url "$url")
+    debug_msg "URL after cleaning: $url"
+
+    # Detect URL type
+    url_type=$(detect_url_type "$url")
+    debug_msg "Detected URL type: $url_type"
+
+    # Get download path
+    get_path || return 1
+
+    # Determine download options based on URL type
+    options=""
+    case "$url_type" in
+        "magnet")
+            options+="download torrent (magnet link),"
+            options+="download torrent with seeding,"
+            ;;
+        "torrent_file")
+            options+="download torrent file,"
+            options+="download torrent with seeding,"
+            ;;
+        "youtube")
+            options+="stream music from video/playlist,"
+            options+="download video/playlist (1080p),"
+            options+="download video/playlist (720p),"
+            options+="download video/playlist (480p),"
+            options+="download video/playlist (360p),"
+            options+="download video/playlist (best quality),"
+            options+="download audio (mp3),"
+            options+="download audio (m4a),"
+            options+="download audio (flac),"
+            options+="download audio (opus),"
+            options+="download subtitles,"
+            options+="download Shorts video,"
+            options+="download Shorts audio,"
+            ;;
+        "image_video")
+            options+="download image/video,"
+            ;;
+        "spotify_track")
+            options+="download Spotify track,"
+            ;;
+        "spotify_playlist")
+            options+="download Spotify playlist,"
+            ;;
+        "spotify_album")
+            options+="download Spotify album,"
+            ;;
+        "github")
+            options+="clone GitHub repo,"
+            ;;
+        "soundcloud")
+            options+="download SoundCloud track,"
+            ;;
+        "vimeo")
+            options+="download Vimeo video,"
+            ;;
+        "dailymotion")
+            options+="download Dailymotion video,"
+            ;;
+        "twitch")
+            options+="download Twitch video,"
+            ;;
+        "bandcamp")
+            options+="download Bandcamp album/track,"
+            ;;
+        "unknown")
+            options+="stream music from video/playlist,"
+            options+="download video/playlist (1080p),"
+            options+="download video/playlist (720p),"
+            options+="download video/playlist (480p),"
+            options+="download video/playlist (360p),"
+            options+="download video/playlist (best quality),"
+            options+="download audio (mp3),"
+            options+="download audio (m4a),"
+            options+="download audio (flac),"
+            options+="download audio (opus),"
+            options+="download image/video,"
+            options+="download subtitles,"
+            options+="download regular file,"
+            ;;
+    esac
+    options+="nothing"
+
+    # Display download options
+    display_header
+    echo "Select download method:"
+    echo
+    IFS=',' read -ra OPTS <<< "$options"
+    for i in "${!OPTS[@]}"; do
+        echo "$((i+1)). ${OPTS[$i]}"
+    done
+    echo
+    read -p "Enter your choice [1-${#OPTS[@]}]: " choice
+
+    if [[ $choice -ge 1 && $choice -le ${#OPTS[@]} ]]; then
+        method="${OPTS[$((choice-1))]}"
+    else
+        error_msg "Invalid choice. Exiting."
+        return 1
+    fi
+
+    # Execute the selected download method
+    case "$method" in
+        "download video/playlist (1080p)")
+            info_msg "Downloading video/playlist in 1080p..."
+            yt-dlp --yes-playlist -cif "bestvideo[height<=1080]+bestaudio/best[height<=1080]" -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download video/playlist (720p)")
+            info_msg "Downloading video/playlist in 720p..."
+            yt-dlp --yes-playlist -cif "bestvideo[height<=720]+bestaudio/best[height<=720]" -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download video/playlist (480p)")
+            info_msg "Downloading video/playlist in 480p..."
+            yt-dlp --yes-playlist -cif "bestvideo[height<=480]+bestaudio/best[height<=480]" -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download video/playlist (360p)")
+            info_msg "Downloading video/playlist in 360p..."
+            yt-dlp --yes-playlist -cif "bestvideo[height<=360]+bestaudio/best[height<=360]" -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download video/playlist (best quality)")
+            info_msg "Downloading video/playlist in best quality..."
+            yt-dlp --yes-playlist -cif "bestvideo+bestaudio/best" -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download audio (mp3)")
+            info_msg "Downloading audio in MP3 format..."
+            yt-dlp -x --audio-format mp3 --audio-quality 0 --embed-thumbnail -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download audio (m4a)")
+            info_msg "Downloading audio in M4A format..."
+            yt-dlp -x --audio-format m4a --audio-quality 0 --embed-thumbnail -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download audio (flac)")
+            info_msg "Downloading audio in FLAC format..."
+            yt-dlp -x --audio-format flac --audio-quality 0 --embed-thumbnail -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download audio (opus)")
+            info_msg "Downloading audio in Opus format..."
+            yt-dlp -x --audio-format opus --audio-quality 0 --embed-thumbnail -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download image/video")
+            info_msg "Downloading image/video..."
+            gallery-dl -d "$path" "$url"
+            ;;
+        "download subtitles")
+            info_msg "Downloading subtitles..."
+            yt-dlp --write-subs --write-auto-subs --skip-download -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "stream music from video/playlist")
+            info_msg "Streaming music..."
+            mpv --no-video --load-unsafe-playlists "$url"
+            ;;
+        "clone GitHub repo")
+            repo_name=$(echo "$url" | cut -d'/' -f5)
+            info_msg "Cloning GitHub repository..."
+            git clone "$url" "$path/$repo_name"
+            ;;
+        "download torrent (magnet link)")
+            info_msg "Downloading torrent from magnet link..."
+            aria2c -x2 -c --max-connection-per-server="$TORRENT_MAX_CONNECTIONS" --seed-time=0 --dir "$path" "$url"
+            ;;
+        "download torrent file")
+            info_msg "Downloading torrent file..."
+            aria2c -x2 -c --max-connection-per-server="$TORRENT_MAX_CONNECTIONS" --seed-time=0 --dir "$path" "$url"
+            ;;
+        "download torrent with seeding")
+            info_msg "Downloading torrent with seeding..."
+            aria2c -x2 -c --max-connection-per-server="$TORRENT_MAX_CONNECTIONS" --seed-time="$TORRENT_SEED_TIME" --dir "$path" "$url"
+            ;;
+        "download regular file")
+            info_msg "Downloading regular file..."
+            aria2c -x2 -c --max-connection-per-server=16 --dir "$path" "$url"
+            ;;
+        "download Spotify track")
+            info_msg "Downloading Spotify track..."
+            spotdl --song "$url" --format mp3 --output "$path/{artist} - {title}.{ext}"
+            ;;
+        "download Spotify playlist")
+            info_msg "Downloading Spotify playlist..."
+            spotdl --playlist "$url" --format mp3 --output "$path/{artist} - {title}.{ext}"
+            ;;
+        "download Spotify album")
+            info_msg "Downloading Spotify album..."
+            spotdl --album "$url" --format mp3 --output "$path/{artist} - {title}.{ext}"
+            ;;
+        "download SoundCloud track")
+            info_msg "Downloading SoundCloud track..."
+            yt-dlp -x --audio-format mp3 --embed-thumbnail -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download Vimeo video")
+            info_msg "Downloading Vimeo video..."
+            yt-dlp -f best -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download Dailymotion video")
+            info_msg "Downloading Dailymotion video..."
+            yt-dlp -f best -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download Twitch video")
+            info_msg "Downloading Twitch video..."
+            yt-dlp -f best -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download Shorts video")
+            info_msg "Downloading YouTube Shorts video..."
+            yt-dlp -f best -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download Shorts audio")
+            info_msg "Downloading YouTube Shorts audio..."
+            yt-dlp -x --audio-format mp3 --embed-thumbnail -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "download Bandcamp album/track")
+            info_msg "Downloading Bandcamp album/track..."
+            yt-dlp -x --audio-format mp3 --embed-thumbnail -o "$path/%(title)s.%(ext)s" "$url"
+            ;;
+        "nothing")
+            return 0
+            ;;
+        *)
+            error_msg "Invalid option selected."
+            return 1
+            ;;
+    esac
+
+    # Check if download was successful
+    if [ $? -eq 0 ]; then
+        success_msg "Download completed successfully!"
+        echo "Files saved to: $path"
+    else
+        error_msg "Download failed! Please check the error messages above."
+        echo "Make sure you have an active internet connection and the URL is valid."
+        echo "You can try enabling debug mode from the main menu for more information."
+        return 1
+    fi
+}
+
+# Main script starts here
+display_header
+
+# Check if script is installed in bin directory
+if [ ! -f "$SCRIPT_PATH" ]; then
+    echo "Installing script to $SCRIPT_PATH..."
+    cp "$0" "$SCRIPT_PATH"
+    chmod +x "$SCRIPT_PATH"
+    success_msg "Script installed. You can run it with: $SCRIPT_NAME"
+    exit 0
+fi
+
+# Check for updates (pass all arguments to the updated script if needed)
+check_for_updates "$@"
+
+# Check if required dependencies are installed
+if ! command_exists yt-dlp || ! command_exists spotdl || ! command_exists gallery-dl; then
+    info_msg "Required dependencies not found. Installing now..."
+    install_dependencies
+fi
+
+# Show main menu
+show_main_menu
